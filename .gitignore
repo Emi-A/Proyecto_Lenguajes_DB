@@ -1,0 +1,20 @@
+# Entorno virtual de Python
+.venv/
+
+# Archivos temporales de Python
+__pycache__/
+*.pyc
+
+# Variables privadas
+.env
+.env.local
+
+# Credenciales de Oracle Cloud
+Wallet_*/
+Wallet_*.zip
+*.pem
+*.p12
+*.sso
+*.jks
+tnsnames.ora
+sqlnet.ora
