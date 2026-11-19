@@ -92,7 +92,7 @@ END sp_listar_trabajadores;
 
 -- DESACTIVAR TRABAJADOR
 -- Cambia el estado del trabajador a inactivo.
-
+-- No se permite si tiene citas futuras pendientes o confirmadas.
 CREATE OR REPLACE PROCEDURE sp_desactivar_trabajador (
 
     -- ID del trabajador que queremos desactivar
@@ -100,7 +100,25 @@ CREATE OR REPLACE PROCEDURE sp_desactivar_trabajador (
 
 )
 AS
+    -- Cantidad de citas futuras activas del trabajador
+    v_pendientes NUMBER;
 BEGIN
+    -- Contamos las citas futuras que todavia no se atienden
+    SELECT COUNT(*)
+    INTO v_pendientes
+    FROM cita c
+    JOIN horario_trabajador h ON c.id_horario = h.id_horario
+    JOIN estado_cita e        ON c.id_estado  = e.id_estado
+    WHERE h.id_trabajador = p_id_trabajador
+      AND e.nombre IN ('Pendiente', 'Confirmada')
+      AND c.fecha_hora_inicio > SYSDATE;
+
+    -- Si tiene citas futuras, no se puede desactivar
+    IF v_pendientes > 0 THEN
+        RAISE_APPLICATION_ERROR(-20106,
+            'El trabajador tiene ' || v_pendientes ||
+            ' cita(s) futuras; cancelelas o reasignelas primero');
+    END IF;
 
     -- Cambiamos el estado del trabajador a N
     UPDATE trabajador
@@ -132,7 +150,23 @@ CREATE OR REPLACE PROCEDURE sp_registrar_horario (
 
 )
 AS
+    -- Cantidad de horarios del trabajador que chocan con el nuevo
+    v_traslapes NUMBER;
 BEGIN
+    -- Buscamos horarios del mismo trabajador que se crucen con el nuevo
+    -- (dos rangos se cruzan si uno empieza antes de que el otro termine;
+    -- los horarios seguidos, como 9-10 y 10-11, si se permiten)
+    SELECT COUNT(*)
+    INTO v_traslapes
+    FROM horario_trabajador
+    WHERE id_trabajador = p_id_trabajador
+      AND fecha_hora_inicio < p_fin
+      AND fecha_hora_fin    > p_inicio;
+
+    IF v_traslapes > 0 THEN
+        RAISE_APPLICATION_ERROR(-20103,
+            'El horario choca con otro horario del mismo trabajador');
+    END IF;
 
     -- Guardamos el horario del trabajador
     INSERT INTO horario_trabajador (
@@ -169,7 +203,55 @@ CREATE OR REPLACE PROCEDURE sp_actualizar_horario (
 
 )
 AS
+    -- Trabajador al que pertenece el horario
+    v_id_trabajador NUMBER;
+
+    -- Otros horarios del trabajador que chocan con el nuevo rango
+    v_traslapes NUMBER;
+
+    -- Citas activas que quedarian fuera del nuevo rango
+    v_fuera NUMBER;
+
 BEGIN
+    -- 1. Obtenemos el trabajador del horario (y validamos que exista)
+    BEGIN
+        SELECT id_trabajador
+        INTO v_id_trabajador
+        FROM horario_trabajador
+        WHERE id_horario = p_id_horario;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20104, 'No existe ese horario');
+    END;
+
+    -- 2. Revisamos que no choque con OTROS horarios del mismo trabajador
+    SELECT COUNT(*)
+    INTO v_traslapes
+    FROM horario_trabajador
+    WHERE id_trabajador = v_id_trabajador
+      AND id_horario   <> p_id_horario
+      AND fecha_hora_inicio < p_fin
+      AND fecha_hora_fin    > p_inicio;
+
+    IF v_traslapes > 0 THEN
+        RAISE_APPLICATION_ERROR(-20103,
+            'El horario choca con otro horario del mismo trabajador');
+    END IF;
+
+    -- 3. Revisamos que las citas activas sigan dentro del nuevo rango
+    --    (las canceladas ya no ocupan espacio)
+    SELECT COUNT(*)
+    INTO v_fuera
+    FROM cita c
+    JOIN estado_cita e ON c.id_estado = e.id_estado
+    WHERE c.id_horario = p_id_horario
+      AND e.nombre <> 'Cancelada'
+      AND (c.fecha_hora_inicio < p_inicio OR c.fecha_hora_fin > p_fin);
+
+    IF v_fuera > 0 THEN
+        RAISE_APPLICATION_ERROR(-20105,
+            'Hay ' || v_fuera || ' cita(s) que quedarian fuera del nuevo horario');
+    END IF;
 
     -- Actualizamos el horario
     UPDATE horario_trabajador
@@ -278,6 +360,7 @@ END sp_asignar_servicio;
 
 -- QUITAR SERVICIO A TRABAJADOR
 -- Se quita un servicio asignado a un trabajador.
+-- No se permite si el trabajador tiene citas futuras de ese servicio.
 
 CREATE OR REPLACE PROCEDURE sp_quitar_servicio (
 
@@ -289,7 +372,26 @@ CREATE OR REPLACE PROCEDURE sp_quitar_servicio (
 
 )
 AS
+    -- Cantidad de citas futuras activas de ese servicio con el trabajador
+    v_pendientes NUMBER;
 BEGIN
+    -- Contamos las citas futuras del trabajador para ese servicio
+    SELECT COUNT(*)
+    INTO v_pendientes
+    FROM cita c
+    JOIN horario_trabajador h ON c.id_horario = h.id_horario
+    JOIN estado_cita e        ON c.id_estado  = e.id_estado
+    WHERE h.id_trabajador = p_id_trabajador
+      AND c.id_servicio   = p_id_servicio
+      AND e.nombre IN ('Pendiente', 'Confirmada')
+      AND c.fecha_hora_inicio > SYSDATE;
+
+    -- Si tiene citas futuras de ese servicio, no se puede quitar
+    IF v_pendientes > 0 THEN
+        RAISE_APPLICATION_ERROR(-20107,
+            'El trabajador tiene ' || v_pendientes ||
+            ' cita(s) futuras de ese servicio; cancelelas o reasignelas primero');
+    END IF;
 
     -- Eliminamos la asignacion entre trabajador y servicio
     DELETE FROM trabajador_servicio
@@ -297,6 +399,12 @@ BEGIN
     -- Buscamos la relacion que queremos quitar
     WHERE id_trabajador = p_id_trabajador
       AND id_servicio = p_id_servicio;
+
+    -- Si no se borro nada, la asignacion no existia
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20108,
+            'El trabajador no tiene asignado ese servicio');
+    END IF;
 
 END sp_quitar_servicio;
 /
