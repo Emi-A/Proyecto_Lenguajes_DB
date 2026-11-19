@@ -301,6 +301,8 @@ CREATE OR REPLACE PROCEDURE sp_eliminar_horario (
 
 )
 AS
+    -- Cantidad de citas vinculadas al horario
+    v_citas NUMBER;
 BEGIN
     -- Contamos las citas registradas en el horario
     SELECT COUNT(*)
@@ -840,4 +842,3 @@ EXCEPTION
 
 END;
 /
-
