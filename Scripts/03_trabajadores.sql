@@ -210,7 +210,8 @@ END sp_listar_horarios;
 
 -- ELIMINAR HORARIO
 -- Se elimina un horario de un trabajador.
-
+-- No se permite si el horario tiene citas (aunque esten canceladas,
+-- la llave foranea de CITA impide borrarlo).
 CREATE OR REPLACE PROCEDURE sp_eliminar_horario (
 
     -- ID del horario que queremos eliminar
@@ -219,12 +220,28 @@ CREATE OR REPLACE PROCEDURE sp_eliminar_horario (
 )
 AS
 BEGIN
+    -- Contamos las citas registradas en el horario
+    SELECT COUNT(*)
+    INTO v_citas
+    FROM cita
+    WHERE id_horario = p_id_horario;
+
+    -- Si tiene citas, no se puede eliminar
+    IF v_citas > 0 THEN
+        RAISE_APPLICATION_ERROR(-20101,
+            'El horario tiene ' || v_citas || ' cita(s) y no se puede eliminar');
+    END IF;
 
     -- Eliminamos el horario seleccionado
     DELETE FROM horario_trabajador
 
     -- Buscamos el horario por su ID
     WHERE id_horario = p_id_horario;
+    
+    -- Si no se borro nada, el horario no existe
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20102, 'No existe ese horario');
+    END IF;
 
 END sp_eliminar_horario;
 /
